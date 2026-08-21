@@ -1,45 +1,50 @@
-"""Plot the 4 lowest-order real Ylm basis functions and two highly mixed
-Ylm linear combinations (10+ terms each) as antenna beam patterns
-(|E|^2, the squared magnitude of the EField) as 3D surfaces, colored by
-value with plasma.
+"""Plot the 4 lowest-order (l,m) real EField patterns -- each the combined
+TM+TE field, not the two mode pieces separately -- and two highly mixed
+VSH linear combinations (10+ terms each) as antenna beam patterns
+(|E|^2 = E_theta^2 + E_phi^2, the squared magnitude of the vector EField)
+as 3D surfaces, colored by value with plasma.
 """
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import cm, colors
 
-from tools.ShBasis import ShBasis
+from tools.VshBasis import VshBasis
 from tools.EField import EField
 from tools.config import PROJECT_ROOT, OUTPUT_DIR
 
 plt.style.use(PROJECT_ROOT / "data" / "sofa.mplstyle")
 
 FREQUENCY = 100e6  # Hz
-HEIGHT = 1.5  # m
-POLARIZATION = "vertical"
+HEIGHT = 0.75  # m (quarter-wave at 100 MHz, off the h=lambda/2 resonance)
 
 N_THETA, N_PHI = 150, 300
-theta = np.linspace(0, np.pi, N_THETA)
+# Avoid the exact poles (theta=0, pi): the (theta_hat, phi_hat) VSH
+# components have a coordinate singularity there (phi itself is undefined
+# at a pole), so nudge the grid slightly inward.
+theta = np.linspace(1e-4, np.pi - 1e-4, N_THETA)
 phi = np.linspace(0, 2 * np.pi, N_PHI)
 theta_grid, phi_grid = np.meshgrid(theta, phi, indexing="ij")
 
-# 4 lowest-order Ylms: l=0 (1 term) + l=1 (3 terms)
+# 4 lowest-order (l,m) fields: each is the combined TM+TE field (equal
+# weight) for that (l,m) -- l=1 has no vector monopole, so l=1's 3 m
+# values plus the first l=2 term give 4.
 lowest_order = [
-    (r"$Y_0^0$", ShBasis([(0, 0)], [1.0])),
-    (r"$Y_1^{-1}$", ShBasis([(1, -1)], [1.0])),
-    (r"$Y_1^0$", ShBasis([(1, 0)], [1.0])),
-    (r"$Y_1^1$", ShBasis([(1, 1)], [1.0])),
+    (r"$l=1,m=-1$", VshBasis([(1, -1, "TM"), (1, -1, "TE")], [1.0, 1.0])),
+    (r"$l=1,m=0$", VshBasis([(1, 0, "TM"), (1, 0, "TE")], [1.0, 1.0])),
+    (r"$l=1,m=1$", VshBasis([(1, 1, "TM"), (1, 1, "TE")], [1.0, 1.0])),
+    (r"$l=2,m=0$", VshBasis([(2, 0, "TM"), (2, 0, "TE")], [1.0, 1.0])),
 ]
 
-# Two highly mixed linear combinations (12 terms each, l up to 4)
-all_lm = [(l, m) for l in range(5) for m in range(-l, l + 1)]
+# Two highly mixed linear combinations (12 terms each, l up to 4, TM+TE)
+all_lm_mode = [(l, m, mode) for l in range(1, 5) for m in range(-l, l + 1) for mode in ("TM", "TE")]
 
 
-def random_mix(seed: int, n_terms: int = 12) -> ShBasis:
+def random_mix(seed: int, n_terms: int = 12) -> VshBasis:
     rng = np.random.default_rng(seed)
-    idx = rng.choice(len(all_lm), size=n_terms, replace=False)
-    terms = [all_lm[i] for i in idx]
+    idx = rng.choice(len(all_lm_mode), size=n_terms, replace=False)
+    terms = [all_lm_mode[i] for i in idx]
     coeffs = rng.uniform(-1.0, 1.0, size=n_terms)
-    return ShBasis(terms, coeffs)
+    return VshBasis(terms, coeffs)
 
 
 mixed = [
@@ -48,7 +53,7 @@ mixed = [
 ]
 
 panels = lowest_order + mixed  # 6 panels, filled row-major into a 2x3 grid
-efields = [(title, EField.from_basis(basis, FREQUENCY, HEIGHT, POLARIZATION)) for title, basis in panels]
+efields = [(title, EField.from_basis(basis, FREQUENCY, HEIGHT)) for title, basis in panels]
 
 save_dir = OUTPUT_DIR / "tests"
 save_dir.mkdir(parents=True, exist_ok=True)
@@ -58,15 +63,15 @@ def plot_panels(value_fn, save_name: str, colorbar_label: str) -> None:
     fig, axes = plt.subplots(2, 3, figsize=(15, 10), subplot_kw={"projection": "3d"})
 
     for ax, (title, efield) in zip(axes.flat, efields):
-        values = value_fn(efield)
-        r = values  # beam pattern (|E|^2) is already non-negative
+        e_theta, e_phi = value_fn(efield)
+        r = e_theta**2 + e_phi**2  # |E|^2, already non-negative
 
         x = r * np.sin(theta_grid) * np.cos(phi_grid)
         y = r * np.sin(theta_grid) * np.sin(phi_grid)
         z = r * np.cos(theta_grid)
 
-        norm = colors.Normalize(vmin=values.min(), vmax=values.max())
-        facecolors = cm.plasma(norm(values))
+        norm = colors.Normalize(vmin=r.min(), vmax=r.max())
+        facecolors = cm.plasma(norm(r))
 
         ax.plot_surface(
             x, y, z,
@@ -90,14 +95,14 @@ def plot_panels(value_fn, save_name: str, colorbar_label: str) -> None:
 
 # Ground-reflected beam pattern: |E|^2 with image theory applied
 plot_panels(
-    lambda efield: efield.apply_image_theory(theta_grid, phi_grid) ** 2,
+    lambda efield: efield.apply_image_theory(theta_grid, phi_grid),
     "beam_visual.png",
-    "Beam pattern |E|^2 (image theory)",
+    "Beam pattern |E|^2",
 )
 
 # Raw beam pattern: |E|^2 unconstrained by the image-theory ground reflection
 plot_panels(
-    lambda efield: efield.evaluate(theta_grid, phi_grid) ** 2,
+    lambda efield: efield.evaluate(theta_grid, phi_grid),
     "beam_visual_raw.png",
-    "Beam pattern |E|^2 (raw)",
+    "Beam pattern |E|^2",
 )
