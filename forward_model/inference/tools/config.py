@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from forward_model.tools.config import PROJECT_ROOT
 
 OUTPUT_DIR = PROJECT_ROOT / "outputs"

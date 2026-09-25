@@ -1,7 +1,8 @@
 import numpy as np
 import numpy.typing as npt
 
-from forward_model.hi21cm.tools.Sky import Sky
+from forward_model.foregrounds.tools.Sky import Sky as ForegroundSky
+from forward_model.signal.tools.Signal import GaussianSignal
 from antenna.tools.EField import EField
 from antenna.tools.VshBasis import VshBasis
 from forward_model.tools.Observer import Observer
@@ -9,21 +10,25 @@ from forward_model.tools import Convolution
 
 
 class Analyze:
-    """Thin facade: composes Sky + Observer + EField + Convolution for a
-    given beam, height, and observer -- no physics logic of its own."""
+    """Thin facade: composes ForegroundSky + GaussianSignal + Observer + EField + Convolution
+    for a given beam, height, and observer -- no physics logic of its own."""
 
     def __init__(self, basis: VshBasis, height: float, observer: Observer,
-                 l_max: int = 40, nside: int = 128, inject_21cm: bool = False):
+                 l_max: int = 40, nside: int = 128,
+                 signal: GaussianSignal | None = None):
         self.basis = basis
         self.height = height
         self.observer = observer
-        self.sky = Sky(nside=nside)
+        self.sky = ForegroundSky(nside=nside)
+        self.signal = signal
         self.l_max = l_max
         self.nside = nside
-        self.inject_21cm = inject_21cm
 
     def _generate_sky(self, freqs_mhz):
-        return self.sky.inject_21cm(freqs_mhz) if self.inject_21cm else self.sky.generate(freqs_mhz)
+        maps = self.sky.generate(freqs_mhz)
+        if self.signal is not None:
+            maps = self.signal.inject(maps, freqs_mhz)
+        return maps
 
     def antenna_temperature(self, frequency_mhz: float) -> float:
         sky_map = self._generate_sky(frequency_mhz)
