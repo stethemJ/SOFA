@@ -48,14 +48,14 @@ for col, m in enumerate(MODELS):
     d   = data[m]
     nz  = ~d['is_zero']   # non-zero trials
 
-    sc = ax.scatter(d['A_mk_true'][nz], d['A_mk_map'][nz],
+    sc = ax.scatter(d['A_mk_true'][nz], d['A_mk_detected'][nz],
                     c=d['nu0_true'][nz], cmap='plasma', norm=nu0_norm,
                     s=12, alpha=0.6, label='non-zero trials')
 
-    # A=0 trials: plot on left spine as triangles at x=5 (off-scale)
+    # A=0 trials: show detected value (should be 0 after threshold)
     n_zero = d['is_zero'].sum()
     if n_zero > 0:
-        ax.scatter([5]*n_zero, d['A_mk_map'][d['is_zero']],
+        ax.scatter([5]*n_zero, d['A_mk_detected'][d['is_zero']],
                    marker='^', c='k', s=14, alpha=0.5, label=f'A_inj=0 ({n_zero})')
 
     lim = [8, 600]
@@ -68,8 +68,10 @@ for col, m in enumerate(MODELS):
     ax.legend(fontsize=8)
     plt.colorbar(sc, ax=ax, label=r'$\nu_0$ [MHz]', pad=0.02)
 
-    med_bias = float(np.median(np.abs(d['bias_A'][nz])))
-    ax.annotate(f'median |bias| = {med_bias:.1f} mK',
+    bias_detected = d['A_mk_detected'][nz] - d['A_mk_true'][nz]
+    med_bias = float(np.median(np.abs(bias_detected)))
+    det_rate = float((d['detection_snr'][nz] >= float(d['detection_threshold'])).mean()) * 100
+    ax.annotate(f'median |bias| = {med_bias:.1f} mK\ndetection rate = {det_rate:.0f}%',
                 xy=(0.05, 0.95), xycoords='axes fraction',
                 va='top', fontsize=9,
                 bbox=dict(boxstyle='round,pad=0.3', fc='white', alpha=0.8))

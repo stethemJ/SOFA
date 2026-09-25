@@ -29,9 +29,10 @@ T_INT_HOURS  = 1000.0
 DELTA_NU_MHZ = 1.0
 
 # ── Random trial config ──────────────────────────────────────────────────────
-N_TRIALS  = 500
-FRAC_ZERO = 0.1   # fraction of trials with A_mk = 0 (pure foreground)
-RNG_SEED  = 42
+N_TRIALS            = 500
+FRAC_ZERO           = 0.1   # fraction of trials with A_mk = 0 (pure foreground)
+RNG_SEED            = 42
+DETECTION_THRESHOLD = 2.0   # SNR = A_mk_map / sigma_A_eff; below this → A_mk = 0
 
 # ── Build foreground sky ─────────────────────────────────────────────────────
 nu     = np.linspace(FREQ_MIN, FREQ_MAX, N_POINTS)
@@ -71,12 +72,15 @@ for fg_model in ('log_poly', 'sync_ff'):
     print(f"--- {fg_model} ---")
     n_fg = FG_PARAMS_N[fg_model]
 
-    A_mk_map   = np.zeros(N_TRIALS)
-    nu0_map    = np.zeros(N_TRIALS)
-    sigma_map  = np.zeros(N_TRIALS)
-    fg_map     = np.zeros((N_TRIALS, n_fg))
-    res_rms    = np.zeros(N_TRIALS)
-    success    = np.zeros(N_TRIALS, dtype=bool)
+    A_mk_map      = np.zeros(N_TRIALS)
+    A_mk_detected = np.zeros(N_TRIALS)   # hard-zero for SNR < DETECTION_THRESHOLD
+    nu0_map       = np.zeros(N_TRIALS)
+    sigma_map     = np.zeros(N_TRIALS)
+    sigma_A_eff   = np.zeros(N_TRIALS)
+    detection_snr = np.zeros(N_TRIALS)
+    fg_map        = np.zeros((N_TRIALS, n_fg))
+    res_rms       = np.zeros(N_TRIALS)
+    success       = np.zeros(N_TRIALS, dtype=bool)
 
     for i in range(N_TRIALS):
         sig    = GaussianSignal(A_mk=A_mk_true[i], nu0=nu0_true[i], sigma=sigma_true[i])
@@ -87,12 +91,15 @@ for fg_model in ('log_poly', 'sync_ff'):
         fitter = BayesianFitter(nu, T_data, nu_ref, T_ref, sigma_noise=sigma_noise)
         result = fitter.fit_map(fg_model, N=LOG_POLY_ORDER, T_fg_ref=T_fg_base)
 
-        A_mk_map[i]  = result['A_mk_map']
-        nu0_map[i]   = result['nu0_map']
-        sigma_map[i] = result['sigma_map']
-        fg_map[i]    = result['fg_params_map']
-        res_rms[i]   = result['residuals_rms']
-        success[i]   = result['success']
+        A_mk_map[i]      = result['A_mk_map']
+        A_mk_detected[i] = result['A_mk_map'] if result['detection_snr'] >= DETECTION_THRESHOLD else 0.0
+        nu0_map[i]       = result['nu0_map']
+        sigma_map[i]     = result['sigma_map']
+        sigma_A_eff[i]   = result['sigma_A_eff']
+        detection_snr[i] = result['detection_snr']
+        fg_map[i]        = result['fg_params_map']
+        res_rms[i]       = result['residuals_rms']
+        success[i]       = result['success']
 
         if (i + 1) % 50 == 0:
             print(f"  [{i+1}/{N_TRIALS}]  last bias A={A_mk_map[i]-A_mk_true[i]:+.1f} mK  "
@@ -104,33 +111,42 @@ for fg_model in ('log_poly', 'sync_ff'):
     bias_nu0   = nu0_map    - nu0_true
     bias_sigma = sigma_map  - sigma_true
 
+    detected_as_zero = detection_snr < DETECTION_THRESHOLD
     print(f"  Non-zero trials ({nz.sum()}):  "
           f"median |bias A|={np.median(np.abs(bias_A[nz])):.1f} mK  "
           f"median |bias nu0|={np.median(np.abs(bias_nu0[nz])):.1f} MHz")
+    print(f"  Detection rate (non-zero): {(~detected_as_zero[nz]).sum()}/{nz.sum()} "
+          f"({100*(~detected_as_zero[nz]).mean():.1f}%)")
     print(f"  Zero-A trials ({is_zero.sum()}): "
-          f"mean A_map={A_mk_map[is_zero].mean():.3f} mK  (should be ~0)\n")
+          f"mean A_map={A_mk_map[is_zero].mean():.3f} mK  "
+          f"mean A_detected={A_mk_detected[is_zero].mean():.3f} mK  "
+          f"false-detections={( ~detected_as_zero[is_zero]).sum()}\n")
 
     save_path = OUTPUT_DIR / f'random_recovery_{fg_model}.npz'
     np.savez(
         save_path,
-        A_mk_true   = A_mk_true,
-        nu0_true    = nu0_true,
-        sigma_true  = sigma_true,
-        is_zero     = is_zero,
-        A_mk_map    = A_mk_map,
-        nu0_map     = nu0_map,
-        sigma_map   = sigma_map,
-        fg_params_map = fg_map,
-        bias_A      = bias_A,
-        bias_nu0    = bias_nu0,
-        bias_sigma  = bias_sigma,
-        residuals_rms = res_rms,
-        success     = success,
-        nu          = nu,
-        nu_ref      = nu_ref,
-        sigma_noise = sigma_noise,
-        fg_oracle   = FG_ORACLE[fg_model],
-        t_int_hours = T_INT_HOURS,
-        delta_nu_mhz = DELTA_NU_MHZ,
+        A_mk_true        = A_mk_true,
+        nu0_true         = nu0_true,
+        sigma_true       = sigma_true,
+        is_zero          = is_zero,
+        A_mk_map         = A_mk_map,
+        A_mk_detected    = A_mk_detected,
+        nu0_map          = nu0_map,
+        sigma_map        = sigma_map,
+        sigma_A_eff      = sigma_A_eff,
+        detection_snr    = detection_snr,
+        fg_params_map    = fg_map,
+        bias_A           = bias_A,
+        bias_nu0         = bias_nu0,
+        bias_sigma       = bias_sigma,
+        residuals_rms    = res_rms,
+        success          = success,
+        nu               = nu,
+        nu_ref           = nu_ref,
+        sigma_noise      = sigma_noise,
+        fg_oracle        = FG_ORACLE[fg_model],
+        t_int_hours      = T_INT_HOURS,
+        delta_nu_mhz     = DELTA_NU_MHZ,
+        detection_threshold = DETECTION_THRESHOLD,
     )
     print(f"  Saved → {save_path}")

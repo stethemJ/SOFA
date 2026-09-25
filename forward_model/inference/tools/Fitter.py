@@ -157,6 +157,7 @@ class BayesianFitter:
         T_model_map   = model(params_map)
         residuals_rms = float(np.sqrt(np.mean((self.T_data - T_model_map) ** 2)))
 
+        det = self._detection_stats(float(A_mk_map), float(nu0_map), float(sigma_map))
         return dict(
             A_mk_map      = float(A_mk_map),
             nu0_map       = float(nu0_map),
@@ -164,6 +165,7 @@ class BayesianFitter:
             fg_params_map = fg_params_map,
             residuals_rms = residuals_rms,
             success       = bool(res.success),
+            **det,
         )
 
     # ------------------------------------------------------------------
@@ -222,6 +224,7 @@ class BayesianFitter:
         T_model_map   = model(params_map)
         residuals_rms = float(np.sqrt(np.mean((self.T_data - T_model_map) ** 2)))
 
+        det = self._detection_stats(float(A_mk_map), float(nu0_map), float(sigma_map))
         return dict(
             A_mk_map      = float(A_mk_map),
             nu0_map       = float(nu0_map),
@@ -229,6 +232,7 @@ class BayesianFitter:
             fg_params_map = fg_params_map,
             residuals_rms = residuals_rms,
             success       = bool(res.success),
+            **det,
         )
 
     # ------------------------------------------------------------------
@@ -389,3 +393,24 @@ class BayesianFitter:
                     best_sse = sse
                     best     = (A_mk, float(nu0), float(sigma))
         return best
+
+    # ------------------------------------------------------------------
+    # Detection statistics (matched-filter Cramér-Rao bound on A_mk)
+    # ------------------------------------------------------------------
+
+    def _detection_stats(self, A_mk_map: float, nu0_map: float,
+                         sigma_map: float) -> dict:
+        """Compute effective noise and detection SNR for the MAP amplitude.
+
+        Uses the matched-filter (Fisher information) bound:
+            sigma_A_eff [mK] = 1e3 / sqrt(sum(template^2 / sigma_noise_K^2))
+        where template = exp(-0.5 * ((nu - nu0) / sigma)^2).
+
+        Returns sigma_A_eff [mK] and detection_snr = A_mk_map / sigma_A_eff.
+        """
+        template    = np.exp(-0.5 * ((self.nu - nu0_map) / sigma_map) ** 2)
+        fisher_A    = np.sum(template ** 2 / self.sigma_noise ** 2)   # [K^-2]
+        sigma_A_eff = 1e3 / np.sqrt(fisher_A) if fisher_A > 0 else np.inf  # [mK]
+        detection_snr = A_mk_map / sigma_A_eff if sigma_A_eff > 0 else 0.0
+        return dict(sigma_A_eff=float(sigma_A_eff),
+                    detection_snr=float(detection_snr))
