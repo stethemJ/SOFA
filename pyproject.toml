@@ -14,4 +14,4 @@ dependencies = { file = ["requirements.txt"] }
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["tools*", "scripts*"]
+include = ["antenna*", "forward_model*"]
